@@ -1,0 +1,36 @@
+---
+title: "Untitled"
+output: html_document
+date: "2023-06-14"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+knn <- nearest_neighbor(neighbors = tune()) %>% 
+  set_engine("kknn") %>%
+  set_mode("classification")
+
+knn_wkflow <- workflow()%>%
+  add_model(knn) %>%
+  add_recipe(Neo_recipe)
+
+knn_grid <- grid_regular(neighbors(range = c(1, 8)),
+                         levels = 8)
+
+knn_fit <- tune_grid(
+  knn_wkflow,
+  resamples = Neo_folds, 
+  grid = knn_grid
+)
+
+best_knn <- select_best(knn_fit)
+
+knn_final <- finalize_workflow(knn_wkflow, best_knn)
+knn1_final <- fit(knn_final, data = Neo_train)
+
+save(knn1_final, knn_fit, file = "knn_fit.rda")
+```
+

@@ -1,0 +1,406 @@
+---
+title: "Predicting Hazardous Asteroids"
+author: "Edwin Gao"
+date: "2023-05-29"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE,
+                      warning = FALSE)
+```
+
+# Introduction
+
+```{r}
+library(ISLR)
+library(ISLR2)
+library(tidyverse)
+library(tidymodels)
+library(readr)
+library(corrr)
+library(themis)
+library(corrplot)
+library(discrim)
+library(klaR)
+library(tune)
+library(ggplot2)
+library(finalfit)
+tidymodels_prefer()
+
+```
+
+The aim of this project is to build a machine learning model to predict whether or not a NASA classified NEO (Nearest Earth Object) is hazardous or not. My data is taken from Kaggle where it was compiled from the NASA open API and the Jet Propulsion Lab Center for Near Earth Object Studies. Throughout this project, we will implement multiple machine learning techniques to yield the best results. <https://www.kaggle.com/datasets/sameepvani/nasa-nearest-earth-objects?datasetId=2272878&searchQuery=r+>
+
+## Inspiration
+
+Ever since I was a little kid, all things space related really fascinated me. I still remember watching documentaries about the Apollo missions and having my eyes glued to the screen. Even now that I'm a university student, my interest in the aerospace industry hasn't subsided. This led to me deciding to combine my interests with my data science skills for this project.
+
+```{r echo=FALSE, out.width = "100%", fig.align = "center"}
+knitr::include_graphics("~/131 project/apollo.png")
+```
+
+## Importance Of This Model
+
+Near Earth Objects (NEOs) are asteroids or comets that have orbits near the Earth. They can range in size from less than one to tens of kilometers across. To be considered a NEO, an asteroid or comet must have an orbit that brings it to within around 45 million kilometers of the Earth's orbit. This can happen when objects experience gravitational pulls from other planets. Gathering information on NEOs can be difficult since their apparent brightness reaches a peak before they pass near the Earth. This means that by the time they are detected they can only be observed for a few weeks or less and it's hard to get readings on their measurements.
+
+There are over 1.1 million asteroids known in our Solar System, with over 30,000 of these being NEOs. Despite this large number, it is very unlikely for an NEO to make contact with Earth. However, in the off chance that it does happen, it would be catastrophic for life on Earth. If an average sized NEO hit the Earth at a typical velocity of 20 km per second, the energy released would be roughly the same as 30 times the force of an atomic bomb. Therefore, it would be extremely useful to build a model that could predict if a NEO is potentially hazardous based off of its characteristics.
+
+# Outline
+
+To build the classification model, we will follow a planned workflow to better understand the process. First, we will clean the data and do basic exploratory analysis. Things that we will be looking for include missing values and the different values that variables take on. There are also variables I don't expect to give much insight into whether a NEO is hazardous or not so we will decide whether or not to include them in the model. With the variables deemed useful, we will perform further exploration to better understand how they are related to whether or not a NEO is hazardous. These variables will be used to predict a binary response variable named "hazardous", which states if a NEO is hazardous or not. we will then split the data into testing and training sets. The training set will be used to create the model and the testing will be used to see how well our model performs.
+
+Afterwards, I will make a recipe and set folds for the 10-fold cross validation we will implement. Logistic Regression, Linear Discriminant Analysis, Quadratic Discriminant Analysis, K-Nearest Neighbor, Decision Tree, and Random Forest models will be all used to model the training data when we finish the setup. Once we have the results from each model, we will select the one that performed the best and fit it to our test dataset to discover how effective our model really is at predicting sunset beauty. Let's begin!
+
+## Tidying The Data/EDA
+
+```{r}
+Neo <- read_csv("~/Downloads/neo.csv")
+head(Neo)
+dim(Neo)
+unique(Neo$orbiting_body)
+unique(Neo$sentry_object)
+```
+
+Here we take a look at the first six rows of our data. Furthermore, by using the dim function to view the dimensions of the data, we see that it is 90836 x 10. The values of orbiting_body and sentry_object seem to be the same throughout the data set and after using the unique function to see all distinct values taken on, we can confirm this is the case.
+
+## Removing Variables
+
+```{r}
+Neo <- subset(Neo, select = -c(id, name, orbiting_body, sentry_object))
+
+Neo$hazardous <- factor(Neo$hazardous, levels = c('FALSE', 'TRUE'))
+
+head(Neo)
+```
+
+Previously, we had seen that orbiting_body and sentry_object each only take on one value throughout the whole data set. This means that neither of them will be really helpful for predicting whether or not an NEO is hazardous or not. Moreover, after doing some research into my data set I found that id and name are simply used to keep track of the NEOs and don't provide any insight into the characteristics of them. This means that we will remove name, id, orbiting_body, and sentry_object from our data set.
+
+## Visual EDA
+
+```{r}
+Neo %>%
+  missing_plot()
+```
+
+From this graph we can see that there are no missing values for any of the variables deemed useful for our model. This is great news since now I don't have to worry about how to deal with missingness.
+
+### Variable Correlation Plot
+
+```{r}
+cor_Neo <- Neo %>%
+  select(est_diameter_min, est_diameter_max, relative_velocity, miss_distance, absolute_magnitude) %>%
+  correlate()
+rplot(cor_Neo) + theme_dark()
+```
+
+From this correlation plot we can see that the only two variables with the highest correlation are minimum estimated diameter and maximum estimated diameter. This makes sense since the two variables are expected to move together. It was surprising to see that relative velocity wasn't strongly correlated with any of the variables since I expected that larger Neos would move faster. Moreover, magnitude is negatively correlated with minimum and maximum estimated diameter. Since brighter stars actually have a smaller magnitude value, this means that brighter stars are usually larger.
+
+Additionally, here we see that the correlation between est_diameter_max and est_diameter_min is almost perfect. Later on, this could pose as an issue in our model building since the variables need to be independent of each other.
+
+#### Correlation Test
+
+```{r}
+cor.test(Neo$est_diameter_min, Neo$est_diameter_max)
+```
+
+Here we see, by using a correlation test function, that est_diameter_max and est_diameter_min are indeed perfectly linear. This means that they will together and will cause issues with our model building. To solve this issue, we remove est_diameter_min from our data set. Removing either is fine since they are collinear.
+
+```{r}
+Neo <- subset(Neo, select = -est_diameter_min)
+```
+
+### Hazardous Distribution
+
+```{r}
+Neo %>% 
+  ggplot(aes(x = hazardous)) +
+  geom_bar()
+```
+
+From this simple plot we can see that most of the NEOs in the data set are classified as non-hazardous. This makes sense since it would be very worrying if a large number of them were considered potentially hazardous.
+
+### Absolute Magnitude
+
+```{r}
+ggplot(Neo, aes(absolute_magnitude)) +
+  geom_histogram(aes(fill = hazardous), bins = 40) 
+
+```
+
+From this plot we can see that as absolute magnitude increases, the proportion of potentially hazardous NEOs decreases. However, we know that brighter NEOs actually have a lower value. Therefore, this plot shows that brighter NEOs are actually more likely to be potentially hazardous.
+
+### Relative Velocity
+
+```{r}
+ggplot(Neo, aes(relative_velocity)) +
+  geom_histogram(aes(fill = hazardous), bins = 50)
+```
+
+From this histogram, we can see that relative velocity has a slight impact on hazardous or not. As the values of total count begin to decrease near the 3000 velocity mark, the amount of True values is still rising and doesn't begin to decrease until later. This means that higher velocity is weaker correlated with being more potentially hazardous.
+
+### Estminated Diameter Max
+
+```{r}
+ggplot(Neo, aes(log(est_diameter_max))) +
+  geom_histogram(aes(fill = hazardous), bins = 50) 
+```
+
+First off, we have to log scale our data to get an efficient graph. This is because there are outliers in the data that would throw off the scale of the graph otherwise. Afterwards, we can see that in general, as est_diameter increases so do the chances that the NEO is hazardous. This makes sense since larger objects have a bigger impact when they crash.
+
+### Distance Missed
+
+```{r}
+ggplot(Neo, aes(miss_distance)) +
+  geom_histogram(aes(fill = hazardous)) 
+```
+
+From this graph we can see that distance missed doesn't have much of an impact on hazardous or not by itself. As the total values of count go up and down, so do the values of True. One would expect NEOs that are closer to Earth to be more hazardous but from our correlation plot we already saw that these two variables aren't strongly correlated.
+
+# Setting Up Models
+
+## Test/Train Split
+
+```{r}
+set.seed(3454)
+
+Neo_split <- initial_split(Neo, prop = 0.75,
+                                strata = hazardous)
+Neo_train <- training(Neo_split)
+Neo_test <- testing(Neo_split)
+
+dim(Neo_train)
+dim(Neo_test)
+```
+
+Before we begin to build out model we first have to split our data into a training set and a testing set. The training set will be used to help build our models while the testing set will be saved for testing the accuracy of our models. It is also important that we set the seed so that our random split is done the same every time. When splitting the data, we stratify on our response variable, hazardous. To split the data, I chose a proportion of 0.75 because it gives enough training data, while keeping enough to be tested.The dimensions of the training set in 68127 x 5 and the testing set is 22709 x 5.
+
+## Recipe Building
+
+```{r}
+Neo_recipe <- recipe(hazardous ~ est_diameter_max + relative_velocity + miss_distance + absolute_magnitude,
+  data = Neo_train) %>%
+  step_scale(all_predictors()) %>% 
+  step_center(all_predictors())
+```
+
+We will use our predictor and response variables to build the recipe that we will use for all of the models. Essentially, each variable that we have deemed useful will be used and together will predict our response variable of hazardous or not. We will be using the variables est_diameter_max, relative_velocity, miss_distance, and absolute_magnitude. We are excluding est_diameter_min. because it is collinear with est_diameter_max. We are excluding id and name since they id is just for cataloging and name is related to the person that discovered the NEO. Neither of these give us any insight into the characteristics of the actual NEO. Lastly, orbiting_body and sentry_object are also removed since both of these only take on one value. For orbiting_body, the value is Earth throughout the entire data set. For sentry_object, it only takes on false.
+
+## K-Fold Cross Validation
+
+```{r}
+Neo_folds <- vfold_cv(Neo_train, v = 10, strata = hazardous)
+Neo_folds
+```
+
+We'll stratify our cross validation on our response variable, hazardous, along with using 10 folds to help with the issue of imbalanced data.
+
+# Model Building
+
+Now it is finally time to begin building our models. Since our data set is decently large, it takes quite a bit of computing power and time to build our models. To solve this issue, I ran the models in an seperate R markdown file and saved those to RDA files that can be easily loaded into this current R markdown.
+
+As stated earlier, we will be fitting logistic regression, linear discriminant analysis, quadratic discriminant analysis, k nearest neighbor, decision tree, and random forest to our data. The first three models don't require tuning which in turn results in a much faster time to build.
+
+## Process
+
+The Logistic Regression, Linear Discriminant Analysis, and Quadratic Discriminant Analysis models don't require any tuning which makes building them simpler and quicker. For the models that require tuning, more time and computing power is required. The general workflow of the model building process goes as follows
+
+1.  We begin by specifying what type of model we are building, then we set its engine and its mode. In our case, our mode is always set to 'classification' since our project is binary classification.
+2.  We then set up the workflow for the model, add the new model, and add our established NEO recipe. Finally we fit the model with our workflow and folds
+
+For Logistic Regression, Linear Discriminant Analysis, and Quadratic Discriminant Analysis this is all that is required since they are simpler models that do not have hyper parameters to be tuned.
+
+3.  We then build the tuning grid with the parameters to be tuned along with the ranges for the levels of tuning we want for each parameter.
+4.  We then tune the model with the specific hyper parameters.
+5.  After which we will select the most accurate model from the tuning grid and then finalize the workflow with those specific tuning parameters.
+6.  We then fit that model to our NEO training dataset.
+7.  Finally, we will save our results to an RDA file in order to easily load them.
+
+# Model Results
+
+```{r}
+load("~/131 project/logreg_fit.rda")
+load("~/131 project/lda_fit.rda")
+load("~/131 project/qda_fit.rda")
+load("~/131 project/knn_fit.rda")
+load("~/131 project/tune_randomforest.rda")
+load("~/131 project/tune_tree.rda")
+```
+
+Since our data set has a lot of observations with 90836, building some of the models took a decent amount of time. However, by running them once and saving the results, we are able to save time in the future. Now we have all of our models built and ready to analyze to determine which one is the best performer.
+
+## Performance Metrics
+
+To determine which model is the most effective, we will be looking at accuracy score and roc_auc. While accuracy is self-explanatory, the roc_auc metric is a method of finding the area under the curve of the receiver operating characteristic. Moreover, the roc_auc shows great efficiency in a binary classification model where the data isn't perfectly balanced. Essentially, we want to area under the curve to be as close to 1 as possible, since 1 means that it's a perfect predictor.
+
+Graphically, a random classifier would be a straight diagonal line from the bottom left to the top right of the graph. We want our curve to reach as close to the top left as possible. The y-axis stands for the true positive rate while the x-axis stands for the false positive rate.
+
+## Visualizing Results
+
+One way to visualize the results of our models that have been tuned is by using the autoplot function. This allows us to see the impact that changing certain parameters will have on the roc_auc.
+
+```{r}
+autoplot(knn_fit)
+autoplot(tune_tree)
+autoplot(tune_randomforest)
+```
+
+We can see from our KNN autoplot that in general, as the number of nearest neighbors increases so does the accuracy. The highest accuracy is around .9 which is great but not as good as the Random Forest Model.
+
+From our Decision Tree autoplot we see that accuracy and roc_auc begin to decrease when the cost-complexity parameter is around .05.
+
+In our Random Forest, there are three parameters to be tuned. Mtry - the number of predictors to be sampled and given to the tree. Trees - the number of trees to grow. Min_n - the minimum number of data values that is needed to create another split. In general, as the number of predictors and trees increased, so did the the accuracy and roc_auc. The optimal model appears to be in the bottom left corner with a minimum node size of 8.
+
+## Model Accuracies
+
+```{r}
+log_reg_auc <- augment(logreg_fit, new_data = Neo_train) %>%
+  roc_auc(hazardous, .pred_FALSE) %>%
+  select(.estimate)
+
+lda_auc <- augment(lda_fit, new_data = Neo_train) %>%
+  roc_auc(hazardous, .pred_FALSE) %>%
+  select(.estimate)
+
+qda_auc <- augment(qda_fit, new_data = Neo_train) %>%
+  roc_auc(hazardous, .pred_FALSE) %>%
+  select(.estimate)
+
+knn_auc <- augment(knn1_final, new_data = Neo_train) %>%
+  roc_auc(hazardous, .pred_FALSE) %>%
+  select(.estimate)
+
+decision_tree_auc <- augment(tune_tree_final, new_data = Neo_train) %>%
+  roc_auc(hazardous, .pred_FALSE) %>%
+  select(.estimate)
+
+random_forest_auc <- augment(tune_forest_final, new_data = Neo_train) %>%
+  roc_auc(hazardous, .pred_FALSE) %>%
+  select(.estimate)
+
+
+roc_aucs <- c(log_reg_auc$.estimate,
+              lda_auc$.estimate,
+              qda_auc$.estimate,
+              knn_auc$.estimate,
+              decision_tree_auc$.estimate,
+              random_forest_auc$.estimate)
+
+names <- c("Logistic Regression",
+           "LDA",
+           "QDA",
+            "KNN",
+            "Decision Tree",
+            "Random Forest")
+
+
+Neo_results <- tibble(Model = names,
+                      ROC_AUC = roc_aucs)
+
+Neo_results <- Neo_results %>% 
+  dplyr::arrange(-roc_aucs)
+
+Neo_results
+```
+
+Here we have a table that displays the final roc_auc value for each fitted model. As we can see, the Random Forest model performed the best with a roc_auc of .9979 which is extremely high. It's important to keep in mind that this is when tested on the training data so we still need to test on the actual testing data to determine its true effectiveness.
+
+Additionally, the KNN model came in second place with a roc_auc score of .9838 placing it barely behind the Random Forest model. Since the third place model has a much lower roc_auc than the first two, we will only further explore the first two.
+
+Our worst performing models were the LDA and Logistic Regression Models. However, it should be noted that they still performed well with roc_auc scores of about .87
+
+# Best Model
+
+```{r}
+show_best(tune_randomforest, metric = "roc_auc") %>%
+  select(-.estimator, .config) %>%
+  slice(1)
+```
+
+Random Forest 142 is our best model on top of being the best of the six different prediction models. Here we can see that the optimal values for mtry, trees, and min_n are 2, 12, and 7 respectively.
+
+## Final Results
+
+### Random forest
+
+```{r}
+Neo_rf_auc <- augment(tune_forest_final, new_data = Neo_test, type = 'prob') %>%
+  roc_auc(hazardous, .pred_FALSE) %>%
+  select(.estimate)
+
+Neo_rf_auc
+```
+
+Now we are finally able to find out our model's performance on the testing set. With a final roc_auc score of .9226, it is safe to say that our Random Forest model did a great job.
+
+### KNN
+
+```{r}
+Neo_knn_auc <- augment(knn1_final, new_data = Neo_test, type = 'prob') %>%
+  roc_auc(hazardous, .pred_FALSE) %>%
+  select(.estimate)
+
+Neo_knn_auc
+```
+
+Here we see that the roc_auc for our KNN model is .8811. This number is still extremely good, just not as good as our random forest.
+
+## ROC Curve
+
+```{r}
+augment(tune_forest_final, new_data = Neo_test, type = 'prob') %>%
+  roc_curve(hazardous, .pred_FALSE) %>%
+  autoplot()
+```
+
+This plot visualizes our roc curve. The higher and to the left the curve is, the better our model performed. From what we can see, the curve almost touches the upper left corner which indicates that it performs extremely well.
+
+# Model Testing
+
+Now it is time to see how effective our model is at predicting hazardous or not. I have collected data from two NEOs in the dataset with one of them being hazardous and the other being not hazardous. We want to see if our model will correctly classify each of them.
+
+## Hazardous Neo
+
+```{r}
+hazardous_Neo <- data.frame(
+  est_diameter_max = 0.59434687,
+  relative_velocity = 73588.73,
+  miss_distance = 61438127,
+  absolute_magnitude = 20.00
+)
+
+predict(tune_forest_final, hazardous_Neo, type = "class")
+```
+
+We can see that our model correctly classified this NEO as potentially hazardous. This was expected since our roc_auc score was so high but it's nice to see it in action.
+
+## Non-Hazardous Neo
+
+```{r}
+non_hazardous_Neo <- data.frame(
+  est_diameter_max = 2.67941497,    
+  relative_velocity = 13569.25,
+  miss_distance = 54839744,
+  absolute_magnitude = 16.73
+)
+
+predict(tune_forest_final, non_hazardous_Neo, type = "class")
+```
+
+Here we see that our model correctly classified this NEO as not potentially hazardous.
+
+# Conclusion
+
+This project was an extremely rewarding experience for me as I got to combine all of the technical skills that I have accumulated with a topic of interest to me. After diligent testing, analyzing, and modeling we were able to create a Random Forest model that was highly effective in predicting whether a NEO was hazardous or not. We even got to see it in action as it correctly classified a hazardous and non-hazardous NEO.
+
+Our best performing models were the Random Forest and KNN with the worst being the LDA and Logistic Regression Models. This isn't the most surprising since Random Forest and KNN are generally better suited for our binary classification problem. 
+
+In the future, if I were to do another project similar to this, I would probably explore more model types. I would consider the application of a neural network even though it would take more computation power and time. Another type of model that I would consider is a XGBoost Classifier since that fits our classification problem. Moreover, I would like to use Python more since much of my coursework at UC Santa Barbara is done in R. Learning how to do the same work in a different language can prove very useful for me.
+
+My hope is that this project will be the beginning of my work combining the aerospace industry and my skills in analytics. After I graduate from college I plan to work in the aerospace industry and I hope that this project and my future relevant work will show my passion for the field. This project dealt with a highly relevant topic as asteroid classification is something that many people at NASA are constantly working on. It feels like I've taken a small step in the right direction and I can't wait to take even more.
+
+```{r echo=FALSE, out.width = "100%", fig.align = "center"}
+knitr::include_graphics("~/131 project/asteroid.jpeg")
+```

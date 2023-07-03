@@ -1,0 +1,23 @@
+---
+title: "Untitled"
+output: html_document
+date: "2023-06-14"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+logreg <- logistic_reg() %>%
+  set_engine("glm") %>% 
+  set_mode("classification")
+
+logreg_wflow <- workflow() %>%
+  add_model(logreg) %>%
+  add_recipe(Neo_recipe)
+
+logreg_fit <- fit(logreg_wflow, Neo_train)
+
+save(logreg_fit, file = "logreg_fit.rda")
+```

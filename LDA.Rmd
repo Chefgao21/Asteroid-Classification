@@ -1,0 +1,23 @@
+---
+title: "Untitled"
+output: html_document
+date: "2023-06-14"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+lda <- discrim_linear() %>%
+  set_engine("MASS") %>%
+  set_mode("classification")
+  
+lda_wkflow <- workflow() %>%
+  add_model(lda) %>%
+  add_recipe(Neo_recipe)
+
+lda_fit <- fit(lda_wkflow, Neo_train)
+
+save(lda_fit, file = "lda_fit.rda")
+```

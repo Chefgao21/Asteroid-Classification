@@ -1,0 +1,36 @@
+---
+title: "Untitled"
+output: html_document
+date: "2023-06-14"
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+```{r}
+Neo_randomforest <- rand_forest(mtry = tune(), 
+                       trees = tune(), 
+                       min_n = tune()) %>%
+  set_engine("ranger", importance = "impurity") %>%
+  set_mode("classification")
+
+Neo_randomforest_wf <- workflow() %>%
+  add_model(Neo_randomforest) %>%
+  add_recipe(Neo_recipe)
+
+
+Neo_randomforest_grid <- grid_regular(mtry(range = c(2, 4)), 
+                             trees(range = c(2, 12)), 
+                             min_n(range = c(2, 8)),
+                             levels = 8)
+
+tune_randomforest <- tune_grid(Neo_randomforest_wf, 
+                     resamples = Neo_folds, 
+                     grid = Neo_randomforest_grid)
+
+best_complexity_forest <- select_best(tune_randomforest)
+
+forest_dt_final <- finalize_workflow(Neo_randomforest_wf, best_complexity_forest)
+tune_forest_final <- fit(forest_dt_final, data = Neo_train)
+
+save(tune_forest_final, tune_randomforest, file = "tune_randomforest.rda")
+```

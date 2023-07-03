@@ -1,0 +1,25 @@
+---
+title: "Untitled"
+output: html_document
+date: "2023-06-14"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+qda <- discrim_quad() %>%
+  set_engine("MASS") %>%
+  set_mode("classification")
+
+
+qda_wkflow <- workflow() %>%
+  add_model(qda) %>%
+  add_recipe(Neo_recipe)
+
+qda_fit <- fit(qda_wkflow, Neo_train)
+
+save(qda_fit, file = "qda_fit.rda")
+```
+
